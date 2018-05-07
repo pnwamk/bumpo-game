@@ -163,6 +163,61 @@
 (define highlight-red-marble (highlight-marble "red"))
 (define highlight-blue-marble (highlight-marble "blue"))
 
+;; dice
+(define dice-size 40)
+(define base-dice-image (overlay (square (sub1 dice-size) "outline" "black")
+                                 (square dice-size "solid" "white")))
+(define base-dice-dot-image (circle 3 "solid" "black"))
+(define base-dice-spacer-image (circle 3 "solid" "white"))
+(define (dice-image n)
+  (match n
+    [1 (overlay base-dice-dot-image
+                base-dice-image)]
+    [2 (place-image
+        base-dice-dot-image
+        10 10
+        (place-image
+         base-dice-dot-image
+         (- dice-size 10)
+         (- dice-size 10)
+         base-dice-image))]
+    [3 (place-image
+        base-dice-dot-image
+        (/ dice-size 2)
+        (/ dice-size 2)
+        (dice-image 2))]
+    [4 (place-image
+        base-dice-dot-image
+        (- dice-size 10) 10
+        (place-image
+         base-dice-dot-image
+         10 (- dice-size 10)
+         (dice-image 2)))]
+    [5 (place-image
+        base-dice-dot-image
+        (/ dice-size 2) (/ dice-size 2)
+        (dice-image 4))]
+    [6 (place-image
+        base-dice-dot-image
+        10 10
+        (place-image
+         base-dice-dot-image
+         10 (/ dice-size 2)
+         (place-image
+          base-dice-dot-image
+          10 (- dice-size 10)
+          (place-image
+           base-dice-dot-image
+           (- dice-size 10) 10
+           (place-image
+            base-dice-dot-image
+            (- dice-size 10) (/ dice-size 2)
+            (place-image
+             base-dice-dot-image
+             (- dice-size 10) (- dice-size 10)
+             base-dice-image))))))]
+    [10 (overlay (text "10" 30 "indigo")
+                 base-dice-image)]))
 
 
 
@@ -365,12 +420,27 @@
     [2 highlight-red-marble]
     [3 highlight-blue-marble]))
 
-
+(define/spec (draw-dice-on-board state board)
+  (-> game-state? image? image?)
+  (match (game-state-dice state)
+    [(list) board]
+    [(cons val _)
+     (define turn (game-state-turn state))
+     (define die (dice-image val))
+     (place-image
+      die
+      (match turn
+        [(or 0 1) (- board-width (+ 5 (image-width die)))]
+        [(or 2 3) (+ 5 (image-width die))])
+      (match turn
+        [(or 0 3) (+ 5 (image-width die))]
+        [(or 1 2) (- board-height (+ 5 (image-width die)))])
+      board)]))
 
 (define/spec (draw-world state)
   (-> game-state? image?)
   (define sel-marble (game-state-selected-marble state))
-  (for/fold ([img bumpo-board-base-image])
+  (for/fold ([img (draw-dice-on-board state bumpo-board-base-image)])
             ([p (in-list (game-state-players state))]
              [player-idx (in-naturals)])
     (define marble-image
@@ -519,6 +589,7 @@
 
 
 
+#;
 (module+ test
   (require rackunit
            racket/set)
@@ -620,21 +691,21 @@
                        (move 3 (coord 3 -4))))
     (check-set=? (possible-player-moves ps 3 10)
                  (list (move 2 (coord 0 9))))))
+(define (roll-dice)
+  (add1 (random 6)))
 
-(define initial-game-state
-  (game-state 0 (list (player #t (list (home 0 0)
-                                       (coord 1 2)
-                                       (coord 2 10)
-                                       (coord 3 0)))
+(define (initial-game-state)
+  (game-state 0 (list (player #t (list (home 0 0) (home 0 1) (home 0 2) (home 0 3)))
                       (player #t (list (home 1 0) (home 1 1) (home 1 2) (home 1 3)))
                       (player #t (list (home 2 0) (home 2 1) (home 2 2) (home 2 3)))
                       (player #t (list (home 3 0) (home 3 1) (home 3 2) (home 3 3))))
               #f
-              '()
+              (list (roll-dice))
               '()))
 
-(big-bang initial-game-state
+(big-bang (initial-game-state)
   [to-draw draw-world]
   [on-mouse handle-mouse])
+
 
 

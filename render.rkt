@@ -456,5 +456,18 @@
 
 (big-bang (initial-game-state #t #f #f #f)
   [on-draw draw-world]
-  [on-tick handle-tick 1]
+  [on-tick handle-tick 1.5]
   [on-mouse handle-mouse])
+
+
+;; BUGS:
+;; -- yellow had 2 in start,
+;;    one in goal position 1
+;;    and one in position right
+;;    before yellow goal, yellow
+;;    got a 6 and had "no valid moves"
+;;    oops the ordering calculation
+;;    needs to normalize the position
+;;    calculation! (i.e. it works
+;;    correctly for player 0 but will
+;;    have bugs for anyone else as is)

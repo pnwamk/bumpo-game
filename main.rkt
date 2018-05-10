@@ -28,8 +28,8 @@
 ;;  2    |   1
 ;;       |
 
-;; each quadrant (except 0) has 16 locations,
-;; here is quadrant 1 for an example:
+;; each quadrant has 16 locations,
+;; here is quadrant 0 for an example:
 ;;- - - - - - - - - - - |
 ;;  0  1                |
 ;; -1  2                |
@@ -507,7 +507,10 @@
       player-index?)
   (modulo (+ q 1) 4))
 
-(define/spec (moves-from-location turn n loc)
+;; calculate all moves (w.r.t. the board) n spaces
+;; away from loc (note this may include invalid
+;; moves w.r.t. where other marbles are located)
+(define/spec (all-moves-from-location turn n loc)
   (-> player-index?
       move-val?
       location?
@@ -555,6 +558,74 @@
           ;; the movement wasn't too far.
           [else (list (coord turn (- pos*)))])])]))
 
+;; map locations for a player's marble to a real
+;; number so we can ask if one marble is behind
+;; another marble
+(define/spec (marble-loc->real player-num loc)
+  (-> player-index?
+      location?
+      real?)
+  (match loc
+    ['center +nan.0]
+    [(? home?) 0]
+    [(coord (== player-num) pos)
+     #:when (<= pos 0)
+     (+ 11 (* 3 12) (abs pos))]
+    [(coord quad pos)
+     (define relative-quad (modulo (- quad player-num) 4))
+     (cond
+       [(zero? relative-quad) pos]
+       [else
+        (+ 11 (* 12 (sub1 relative-quad)) pos)])]))
+
+(define/spec (behind? player-num loc1 loc2)
+  (-> player-index?
+      location?
+      location?
+      boolean?)
+  (<= (marble-loc->real player-num loc1)
+      (marble-loc->real player-num loc2)))
+
+;; valid-move?
+;;
+;; players : current state of player marbles
+;; turn : who's turn is it?
+;; start : start location for that marble
+;; end : end location for marble
+;;
+;; Takes a valid move (w.r.t. the board)
+;; returns #f if the move would be invalid because
+;; of some other marble on the board, otherwise returns #t.
+(define/spec (valid-move? players turn marble-idx start end)
+  (-> (list player? player? player? player?)
+      player-index?
+      marble-index?
+      location?
+      action-location?
+      boolean?)
+  (define player-at-end (occupied? end players))
+  (cond
+    ;; you can't land on your own marbles
+    [(eqv? player-at-end turn) #f]
+    ;; you can't land on a marble that is in its
+    ;; first position outside of home
+    [(and player-at-end
+          (coord? end)
+          (= 1 (coord-position end))
+          (eqv? player-at-end (coord-quadrant end)))
+     #f]
+    [else
+     ;; you can't pass your own marbles
+     (for/and ([other-marble-loc (in-list (player-marbles (list-ref players turn)))]
+               [other-marble-idx (in-naturals)]
+               #:when (not (eqv? marble-idx other-marble-idx)))
+       ;; i.e. if your marble was strictly behind another one
+       ;;      of your marbles, it can't be the case that that other
+       ;;      marble is now strictly behind you
+       (if (behind? turn start other-marble-loc)
+           (not (behind? turn other-marble-loc end))
+           #t))]))
+
 (define/spec (possible-player-moves players turn n)
   (-> (list player? player? player? player?)
       player-index?
@@ -564,14 +635,8 @@
             ([marble-idx (in-range 4)])
     (define loc (list-ref (player-marbles (list-ref players turn)) marble-idx))
     (define locs
-      (for/list ([loc* (in-list (moves-from-location turn n loc))]
-                 ;; drop movements which land on a players own marble
-                 ;; or when they land on a player's marble in their safe spot
-                 #:when (match (occupied? loc* players)
-                          [(== turn) #f]
-                          [other (match loc*
-                                   [(coord (== other) 1) #f]
-                                   [_ #t])]))
+      (for/list ([loc* (in-list (all-moves-from-location turn n loc))]
+                 #:when (valid-move? players turn marble-idx loc loc*))
         (move marble-idx loc*)))
     (append locs possible-moves)))
 
@@ -589,7 +654,7 @@
 
 
 
-#;
+
 (module+ test
   (require rackunit
            racket/set)

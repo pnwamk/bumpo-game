@@ -56,25 +56,20 @@
      img)))
 
 ;; marbles
-(define (marble-image color1 color2 sides)
-  (overlay
-   (radial-star sides 4 (- circle-radius 2) "solid" color2)
-   (circle (- circle-radius 2) 'solid color1)
-   (circle circle-radius 'solid color2)))
 (define green-marble
-  (marble-image (color 0 255 0) (color 0 128 0) 4))
+  (scale 1/4 (bitmap "img/green.png")))
 (define blue-marble
-  (marble-image (color 0 255 255) "blue" 6))
+  (scale 1/4 (bitmap "img/blue.png")))
 (define yellow-marble
-  (marble-image (color 255 255 0) "goldenrod" 8))
+  (scale 1/4 (bitmap "img/yellow.png")))
 (define red-marble
-  (marble-image (color 255 0 0) (color 150 0 0) 10))
+  (scale 1/4 (bitmap "img/red.png")))
 (define (highlight-marble color1)
-  (radial-star 20 (add1 circle-radius) (+ 4 circle-radius) "outline" color1))
+  (radial-star 24 (+ 3 circle-radius) (+ 5 circle-radius) "outline" color1))
 (define highlight-green-marble (highlight-marble "green"))
 (define highlight-yellow-marble (highlight-marble "yellow"))
 (define highlight-red-marble (highlight-marble "red"))
-(define highlight-blue-marble (highlight-marble "blue"))
+(define highlight-blue-marble (highlight-marble "cornflowerblue"))
 (define highlight-white (highlight-marble "white"))
 
 ;; dice
@@ -416,7 +411,7 @@
        [(and clicked-location
              (selected-marble s)
              (valid-move? s clicked-location))
-        (move-marble s sel-marble clicked-location)]
+        (move-marble/inc-turn s sel-marble clicked-location)]
        [(and marble-at-loc
              (eqv? (current-turn s)
                    (marble-player marble-at-loc)))
@@ -436,8 +431,7 @@
       (cons m moves)))
   (cond
     ;; no moves
-    [(null? cur-possible-moves)
-     (next-turn s)]
+    [(null? cur-possible-moves) (skip-turn s)]
     ;; AI player, choose a random marble to select (if
     ;; one is not selected) or move (if one is selected)
     [(not (list-ref (game-state-players s) cur-player))
@@ -448,26 +442,17 @@
         (match (assoc sel-marble cur-possible-moves)
           [(cons m (cons dest1 dest2))
            (if (zero? (random 2))
-               (move-marble s m dest1)
-               (move-marble s m dest2))]
+               (move-marble/inc-turn s m dest1)
+               (move-marble/inc-turn s m dest2))]
           [(cons m dest)
-           (move-marble s m dest)])])]
+           (move-marble/inc-turn s m dest)])])]
     [else s]))
 
-(big-bang (initial-game-state #t #f #f #f)
+
+(big-bang (initial-game-state #t #f #f #t)
   [on-draw draw-world]
   [on-tick handle-tick 1.5]
   [on-mouse handle-mouse])
 
 
-;; BUGS:
-;; -- yellow had 2 in start,
-;;    one in goal position 1
-;;    and one in position right
-;;    before yellow goal, yellow
-;;    got a 6 and had "no valid moves"
-;;    oops the ordering calculation
-;;    needs to normalize the position
-;;    calculation! (i.e. it works
-;;    correctly for player 0 but will
-;;    have bugs for anyone else as is)
+

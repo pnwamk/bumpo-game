@@ -142,29 +142,29 @@
   (case-lambda
     [(s m start dest)
      (define player (current-turn s))
-     (match (loc-ref s dest)
-       [(marble other-player)
-        (cond
-          ;; you can't land on your own marble
-          [(eqv? player other-player) #f]
-          [else
-           (cond
-             ;; or on an enemy marble in its safe spot
-             [(and (coord? dest)
-                   (eqv? other-player (coord->quadrant dest))
-                   (zero? (coord->index dest)))
-              #f]
-             [else dest])])]
-       [#f
-        ;; you can't pass your own marbles
-        (cond
-          [(for*/or ([m* (in-player-marbles player)]
-                     #:when (not (eq? m m*))
-                     [loc* (in-value (marble-loc s m*))])
-             (and (loc< start loc*)
-                  (loc< loc* dest)))
-           #f]
-          [else dest])])]
+     (cond
+       ;; you can't pass your own marbles
+       [(for*/or ([m* (in-player-marbles player)]
+                  #:when (not (eq? m m*))
+                  [loc* (in-value (marble-loc s m*))])
+          (and (loc< player start loc*)
+               (loc< player loc* dest)))
+        #f]
+       [(loc-ref s dest)
+        => (match-lambda
+             [(marble other-player)
+              (cond
+                ;; you can't land on your own marble
+                [(eqv? player other-player) #f]
+                [else
+                 (cond
+                   ;; or on an enemy marble in its safe spot
+                   [(and (coord? dest)
+                         (eqv? other-player (coord->quadrant dest))
+                         (zero? (coord->index dest)))
+                    #f]
+                   [else dest])])])]
+       [else dest])]
     [(s m start dest1 dest2)
      (cond
        [(filter-moves s m start dest1)
@@ -254,9 +254,9 @@
 ;; (adjusting any marble already at `dest` if
 ;;  necessary)
 ;; NOTE: `move-marble` assumes the move is valid!
-(define/spec (move-marble s m dest)
+(define/spec (move-marble/inc-turn s m dest)
   (-> game-state? marble? dest? game-state?)
-  (match-define (game-state players turn movements selected board marble-locations) s)
+  (match-define (game-state players turn movements _ board marble-locations) s)
   ;; consume the movement, unselect the marble, if there are no movements left
   ;; for this player, roll the dice again and increment the turn
   (define start (hash-ref marble-locations m))
@@ -265,7 +265,7 @@
   (set! movements (cdr movements))
   (when (eqv? 6 last-roll)
     (set! movements (append movements (list (die-roll)))))
-  (set! selected #f)
+  
   (define maybe-dest-marble (hash-ref board dest #f))
   (set! board (hash-set board dest m))
   (set! marble-locations (hash-set marble-locations m dest))
@@ -283,27 +283,15 @@
   (when (null? movements)
     (set! turn (inc-turn turn))
     (set! movements (list (die-roll))))
-  (game-state players turn movements selected board marble-locations))
+  (game-state players turn movements #f board marble-locations))
 
-(define/spec (next-turn s)
+(define/spec (skip-turn s)
   (-> game-state? game-state?)
-  (match-define (game-state players turn movements selected board marble-locations) s)
+  (match-define (game-state ps turn movements selected board m-locs) s)
   (match movements
-    [(cons cur rst)
-     #:when (or (pair? rst)
-                (eqv? 6 cur))
-     (game-state players
-                 turn
-                 (if (eqv? 6 cur)
-                     (append rst (list (die-roll)))
-                     rst)
-                 #f
-                 board
-                 marble-locations)]
-    [_
-     (game-state players
-                 (inc-turn turn)
-                 (list (die-roll))
-                 #f
-                 board
-                 marble-locations)]))
+    [(cons 6 rst)
+     (game-state ps turn (append rst (list (die-roll))) #f board m-locs)]
+    [(cons _ (? pair? rst))
+     (game-state ps turn rst #f board m-locs)]
+    [(cons _ (? null?))
+     (game-state ps (inc-turn turn) (list (die-roll)) #f board m-locs)]))

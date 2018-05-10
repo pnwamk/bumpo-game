@@ -168,5 +168,21 @@
     [(home? x) -1]
     [else (error 'loc->real "invalid loc! ~a" x)]))
 
-(define (loc< x y)
-  (< (loc->real x) (loc->real y)))
+;; compare locations for a player,
+;; used to determine if a marble
+;; has passed a marble (of the same color)
+(define/spec (loc< player x y)
+  (-> quadrant? loc? loc? boolean?)
+  ;; we adjust coords so the first coord for
+  ;; a player is 0 and the furthest is 47
+  (define (adjust-coord c)
+    (fxmodulo (fx- c (fx* player 12)) 48))
+  (define adjusted-x (if (coord? x)
+                         (adjust-coord x)
+                         x))
+  (define adjusted-y (if (coord? y)
+                         (adjust-coord y)
+                         y))
+  (< (loc->real adjusted-x) (loc->real adjusted-y)))
+
+

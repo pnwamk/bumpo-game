@@ -3,7 +3,8 @@
 (require define-with-spec
          racket/match
          racket/struct
-         racket/fixnum)
+         racket/fixnum
+         "loc.rkt")
 
 
 

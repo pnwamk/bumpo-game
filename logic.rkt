@@ -60,24 +60,27 @@
             (or (fx<= x 6)
                 (eq? x 10)))))
 
-
-;; players : (list boolean? boolean? boolean? boolean?)
-;;     which player is a human? #t is human, #f is AI
-;; turn : (<= 0 n 3)
-;;     whose turn is it?
-;; movements : (listof (or (<= 1 n 6) 10))
-;; selected : marble or #f
-;;     which marble is selected?
-;; board : (hash loc? marble?)
-;;     mapping from locations to marbles
-;; marble-locations : (hash marble? loc?)
-;;     mapping from barbles to locations                   
+                  
 (struct/spec game-state
-             ([players (list boolean? boolean? boolean? boolean?)]
+             (;; how many ticks have passed?
+              [tick exact-nonnegative-integer?]
+              ;; Which player is a human? #t is human, #f is AI
+              [players (list boolean? boolean? boolean? boolean?)]
+              ;; Whose turn is it?
               [turn quadrant?]
+              ;; List of die values to be used by the current player
+              ;; (there can be more than 1 value after landing on another player)
               [movements (listof movement?)]
+              ;; Which marble does the current player have selected?
               [selected (either marble? #f)]
+              ;; Are we currently animating a movement for the selected
+              ;; marble? if so, what is the current location:
+              [active-location (either loc? #f)]
+              ;; and what is the current destination:
+              [active-destination (either dest? #f)]
+              ;; Mapping of locations to marbles:
               [board hash?]
+              ;; Mapping of marbles to locations:
               [marble-locations hash?]))
 
 (define (initial-game-state player1 player2 player3 player4)
@@ -89,13 +92,16 @@
                [i (in-range 16)])
       (define h (home (quotient i 4) (remainder i 4)))
       (values (hash-set b h m) (hash-set m-locs m h))))
-  (game-state (list (and player1 #t)
-               (and player2 #t)
-               (and player3 #t)
-               (and player4 #t))
+  (game-state 0
+              (list (and player1 #t)
+                    (and player2 #t)
+                    (and player3 #t)
+                    (and player4 #t))
          0  ;; initial turn is player 0
          (list (die-roll))
-         #f ;; start with no marble selected 
+         #f ;; start with no marble selected
+         #f ;; start with no active marble location
+         #f ;; start with no active marble dest
          b
          m-locs))
 
@@ -135,35 +141,42 @@
 
 (define/spec (set-selected-marble s maybe-m)
   (-> game-state? (either marble? #f) game-state?)
-  (match-define (game-state ps turn ms _ b mlocs) s)
-  (game-state ps turn ms maybe-m b mlocs))
+  (match-define (game-state tick ps turn ms _ _ _ board mlocs) s)
+  (game-state (add1 tick) ps turn ms maybe-m #f #f board mlocs))
+
+(define/spec (passes-self? s start dest)
+  (-> game-state? loc? dest? boolean?)
+  (define player (current-turn s))
+  (let loop ([cur start])
+    (define next (next-loc player cur dest))
+    (cond
+      [(not next) #f]
+      [else
+       (define maybe-marble-at-loc (loc-ref s next))
+       (cond
+         [(and maybe-marble-at-loc
+               (eqv? player (marble-player maybe-marble-at-loc)))
+          #t]
+         [else (loop next)])])))
 
 (define filter-moves
   (case-lambda
     [(s m start dest)
-     (define player (current-turn s))
      (cond
        ;; you can't pass your own marbles
-       [(for*/or ([m* (in-player-marbles player)]
-                  #:when (not (eq? m m*))
-                  [loc* (in-value (marble-loc s m*))])
-          (and (loc< player start loc*)
-               (loc< player loc* dest)))
-        #f]
+       [(passes-self? s start dest) #f]
        [(loc-ref s dest)
         => (match-lambda
              [(marble other-player)
               (cond
                 ;; you can't land on your own marble
-                [(eqv? player other-player) #f]
-                [else
-                 (cond
-                   ;; or on an enemy marble in its safe spot
-                   [(and (coord? dest)
-                         (eqv? other-player (coord->quadrant dest))
-                         (zero? (coord->index dest)))
-                    #f]
-                   [else dest])])])]
+                [(eqv? (current-turn s) other-player) #f]
+                ;; or on an enemy marble in its safe spot
+                [(and (coord? dest)
+                      (eqv? other-player (coord->quadrant dest))
+                      (zero? (coord->index dest)))
+                 #f]
+                [else dest])])]
        [else dest])]
     [(s m start dest1 dest2)
      (cond
@@ -248,7 +261,45 @@
                (equal? (cdr moves) clicked-location)))))
 
 (define (inc-turn n)
-  (modulo (add1 n) 4))
+  (remainder (add1 n) 4))
+
+
+;; NOTE: `initiate-move` assumes the move is valid!
+(define/spec (initiate-move s m dest)
+  (-> game-state? marble? dest? game-state?)
+  (match-define (game-state tick players turn movements _ _ _ board marble-locations) s)
+  (game-state (add1 tick) players turn movements m (marble-loc s m) dest board marble-locations))
+
+(define/spec (marble-moving? s)
+  (-> game-state? boolean?)
+  (and (game-state-active-location s) #t))
+
+
+(define/spec (move-marble-one-step s)
+  (-> game-state? game-state?)
+  (match-define (game-state tick
+                            players
+                            turn
+                            movements
+                            selected
+                            selected-loc
+                            selected-dest
+                            board
+                            marble-locations)
+    s)
+  (cond
+    [(next-loc turn selected-loc selected-dest)
+     => (λ (new-loc) (game-state (add1 tick)
+                                 players
+                                 turn
+                                 movements
+                                 selected
+                                 new-loc
+                                 selected-dest
+                                 board
+                                 marble-locations))]
+    [else
+     (move-marble/inc-turn s selected selected-dest)]))
 
 ;; given state `s`, move marble `m` to `dest`
 ;; (adjusting any marble already at `dest` if
@@ -256,7 +307,7 @@
 ;; NOTE: `move-marble` assumes the move is valid!
 (define/spec (move-marble/inc-turn s m dest)
   (-> game-state? marble? dest? game-state?)
-  (match-define (game-state players turn movements _ board marble-locations) s)
+  (match-define (game-state tick players turn movements _ _ _ board marble-locations) s)
   ;; consume the movement, unselect the marble, if there are no movements left
   ;; for this player, roll the dice again and increment the turn
   (define start (hash-ref marble-locations m))
@@ -283,15 +334,49 @@
   (when (null? movements)
     (set! turn (inc-turn turn))
     (set! movements (list (die-roll))))
-  (game-state players turn movements #f board marble-locations))
+  (game-state (add1 tick) players turn movements #f #f #f board marble-locations))
 
 (define/spec (skip-turn s)
   (-> game-state? game-state?)
-  (match-define (game-state ps turn movements selected board m-locs) s)
+  (match-define (game-state tick ps turn movements _ _ _ board m-locs) s)
   (match movements
     [(cons 6 rst)
-     (game-state ps turn (append rst (list (die-roll))) #f board m-locs)]
+     (game-state (add1 tick) ps turn (append rst (list (die-roll))) #f #f #f board m-locs)]
     [(cons _ (? pair? rst))
-     (game-state ps turn rst #f board m-locs)]
+     (game-state (add1 tick) ps turn rst #f #f #f board m-locs)]
     [(cons _ (? null?))
-     (game-state ps (inc-turn turn) (list (die-roll)) #f board m-locs)]))
+     (game-state (add1 tick) ps (inc-turn turn) (list (die-roll)) #f #f #f board m-locs)]))
+
+(define/spec (loc-add1 l)
+  (-> loc? dest?)
+  (remainder (add1 l) 48))
+
+;; if a marble is going to move from `start` to `end`,
+;; what is the single next step towards that movement,
+;; or #f if start == end
+(define/spec (next-loc player start end)
+  (-> quadrant? loc? dest? (either dest? #f))
+  (match start
+    [(== end) #f]
+    [(? home?) (coord player 0)]
+    [(? center?) (coord (predecessor-quadrant player) 5)]
+    [(? goal?) (goal player (add1 (goal->index start)))]
+    [(? coord?)
+     (match end
+       [(? coord?) (loc-add1 start)]
+       [(? center?) (if (and (eqv? (coord->quadrant start)
+                                   player)
+                             (eqv? 5 (coord->index start)))
+                        center
+                        (add1 start))]
+       [(? goal?) (if (and (eqv? (coord->quadrant start)
+                                 (predecessor-quadrant player))
+                           (eqv? 11 (coord->index start)))
+                      (goal player 0)
+                      (add1 start))])]))
+
+
+(define/spec (increment-tick-count s)
+  (-> game-state? game-state?)
+  (match-define (game-state tick ps turn movements sel sel-loc sel-dest board m-locs) s)
+  (game-state (add1 tick) ps turn movements sel sel-loc sel-dest board m-locs))

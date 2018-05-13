@@ -354,8 +354,7 @@
 
 (define/spec (draw-world s)
   (-> game-state? image?)
-  (define sel-marble (selected-marble s))
-  (define sel-marble-movement-loc (game-state-active-location s))
+  (define sel-marble (selected-marble s)) 
   (define current-player (current-turn s))
   (define highlight-image
     (player-num->highlight-marble-image current-player))
@@ -374,7 +373,7 @@
            (cond
              ;; if its moving, we draw it later after all
              ;; the other marbles are drawn
-             [sel-marble-movement-loc img]
+             [(and sel-marble (selected-movement-loc s)) img]
              [else
               (let ([marble-image (overlay marble-image highlight-image)])
                 (place-image marble-image x y img))])]
@@ -385,17 +384,18 @@
     [(not sel-marble) rendered-board-image]
     ;; the selected marble is moving, render it over
     ;; the correct location
-    [sel-marble-movement-loc
-     (match-define (posn moving-x moving-y)
-       (loc->image-posn sel-marble-movement-loc))
-     (define marble-at-loc (loc-ref s sel-marble-movement-loc))
-     ;; if the location is occupied, raise the marble slightly
-     (place-image (player-num->marble-image (marble-player sel-marble))
-                  moving-x
-                  (if (and marble-at-loc (not (eq? sel-marble marble-at-loc)))
-                      (- moving-y 5)
-                      moving-y)
-                  rendered-board-image)]
+    [(selected-movement-loc s)
+     => (λ (sel-marble-movement-loc)
+          (match-define (posn moving-x moving-y)
+            (loc->image-posn sel-marble-movement-loc))
+          (define marble-at-loc (loc-ref s sel-marble-movement-loc))
+          ;; if the location is occupied, raise the marble slightly
+          (place-image (player-num->marble-image (marble-player sel-marble))
+                       moving-x
+                       (if (and marble-at-loc (not (eq? sel-marble marble-at-loc)))
+                           (- moving-y 5)
+                           moving-y)
+                       rendered-board-image))]
     ;; a marble is selected but not moving, let's render
     ;; the paths it can take
     [else
@@ -477,7 +477,7 @@
        [(not clicked-location)
         (set-selected-marble s #f)]
        [(and clicked-location
-             (selected-marble s)
+             sel-marble
              (valid-move? s clicked-location))
         (initiate-move s sel-marble clicked-location)]
        [(and marble-at-loc

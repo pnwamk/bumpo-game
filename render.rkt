@@ -372,8 +372,8 @@
           [(and (eqv? player-idx (current-turn s))
                 (eq? m sel-marble))
            (cond
-             ;; if its moving, draw it later after all the other
-             ;; marbles are drawn
+             ;; if its moving, we draw it later after all
+             ;; the other marbles are drawn
              [sel-marble-movement-loc img]
              [else
               (let ([marble-image (overlay marble-image highlight-image)])
@@ -396,19 +396,68 @@
                       (- moving-y 5)
                       moving-y)
                   rendered-board-image)]
+    ;; a marble is selected but not moving, let's render
+    ;; the paths it can take
     [else
      (define dist (game-state-die s))
      (define moves (possible-moves s sel-marble dist))
      (match moves
        [#f rendered-board-image]
-       [(cons (app loc->image-posn (posn x1 y1))
-              (app loc->image-posn (posn x2 y2)))
-        (place-image highlight-white x1 y1
-                     (place-image highlight-white x2 y2
-                                  rendered-board-image))]
-       [(app loc->image-posn (posn x y))
-        (place-image highlight-white x y rendered-board-image)])]))
+       [(cons dest1 dest2)
+        (render-path (render-path rendered-board-image
+                                  current-player
+                                  (marble-loc s sel-marble)
+                                  dest1)
+                     current-player
+                     (marble-loc s sel-marble)
+                     dest2)]
+       [(? dest? dest)
+        (render-path rendered-board-image
+                     current-player
+                     (marble-loc s sel-marble)
+                     dest)])]))
 
+
+(define green-pen (make-pen green-color 5 "solid" "round" "round"))
+(define yellow-pen (make-pen yellow-color 5 "solid" "round" "round"))
+(define red-pen (make-pen red-color 5 "solid" "round" "round"))
+(define blue-pen (make-pen blue-color 5 "solid" "round" "round"))
+
+(define/spec (player->path-pen player)
+  (-> quadrant? pen?)
+  (match player
+    [0 green-pen]
+    [1 yellow-pen]
+    [2 red-pen]
+    [3 blue-pen]))
+
+(define green-end-circle (circle 6 'solid green-color))
+(define yellow-end-circle (circle 6 'solid yellow-color))
+(define red-end-circle (circle 6 'solid red-color))
+(define blue-end-circle (circle 6 'solid blue-color))
+
+(define/spec (player->path-end-circle player)
+  (-> quadrant? image?)
+  (match player
+    [0 green-end-circle]
+    [1 yellow-end-circle]
+    [2 red-end-circle]
+    [3 blue-end-circle]))
+
+(define/spec (render-path img player start dest)
+  (-> image? quadrant? loc? dest? image?)
+  (let loop ([img img]
+             [cur start])
+    (define next (next-loc player cur dest))
+    (cond
+      [(not next)
+       (match-define (posn end-x end-y) (loc->image-posn cur))
+       (place-image (player->path-end-circle player) end-x end-y img)]
+      [else
+       (match-define (posn cur-x cur-y) (loc->image-posn cur))
+       (match-define (posn next-x next-y) (loc->image-posn next))
+       (loop (add-line img cur-x cur-y next-x next-y (player->path-pen player))
+             next)])))
 
 (define/spec (handle-mouse s x y mevent)
   (-> game-state? real? real? mouse-event?

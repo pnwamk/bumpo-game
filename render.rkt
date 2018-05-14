@@ -10,7 +10,7 @@
 
 
 (provide image-coord->location
-         draw-world)
+         render-state)
 
 (define pi 3.141592653589793)
 
@@ -356,7 +356,7 @@
                      (list-ref board-quadrants q-idx))
                     loc-idx))]))
 
-(define/spec (draw-world s)
+(define/spec (render-state s)
   (-> game-state? image?)
   (define sel-marble (selected-marble s)) 
   (define current-player (current-turn s))

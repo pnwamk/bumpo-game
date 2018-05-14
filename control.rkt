@@ -6,19 +6,19 @@
          racket/match
          "loc.rkt"
          "logic.rkt"
-         "graphics.rkt")
+         "render.rkt")
 
-(provide handle-mouse
+(provide handle-button-down
          handle-tick)
 
-(define/spec (handle-mouse s x y mevent)
-  (-> game-state? real? real? mouse-event?
+
+(define/spec (handle-button-down s x y)
+  (-> game-state? real? real?
       game-state?)
   (cond
     [(or (not (human-player? s (current-turn s)))
          (selected-marble-moving? s))
      s]
-    [(not (mouse=? mevent "button-down")) s]
     [else
      (define sel-marble (selected-marble s))
      (define clicked-location (image-coord->location x y))
@@ -37,14 +37,13 @@
        [else
         (set-selected-marble s #f)])]))
 
-(define/spec (handle-tick s)
-  (-> game-state? game-state?)
+(define/spec (handle-tick s tick)
+  (-> game-state? exact-nonnegative-integer? game-state?)
   (cond
     ;; marble is moving (should happen every tick)
     [(selected-marble-moving? s) (move-selected-marble-one-step s)]
     ;; all other activity should occur every 5 ticks
-    [(not (zero? (remainder (current-tick s) 5)))
-     (increment-tick s)]
+    [(not (zero? (remainder tick 5))) s]
     [else
      (define cur-player (current-turn s))
      (define dist (current-die s))
@@ -70,4 +69,4 @@
                   (initiate-selected-marble-move s dest1)
                   (initiate-selected-marble-move s dest2))]
              [(cons m dest) (initiate-selected-marble-move s dest)])])]
-       [else (increment-tick s)])]))
+       [else s])]))

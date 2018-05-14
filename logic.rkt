@@ -9,7 +9,6 @@
 (provide initial-game-state
          game-state?
 
-         current-tick
          current-turn
          current-die
          
@@ -34,8 +33,7 @@
          next-loc
 
          skip-turn
-         increment-tick
-
+         
          in-player-marbles)
 
 
@@ -78,9 +76,7 @@
                         [movement-destination (either dest? #f)]))
 
 (struct/spec game-state
-             (;; how many ticks have passed?
-              [tick exact-nonnegative-integer?]
-              [info game-info?]
+             ([info game-info?]
               ;; Whose turn is it?
               [turn quadrant?]
               ;; List of die values to be used by the current player
@@ -99,8 +95,7 @@
                [i (in-range 16)])
       (define loc (home (quotient i 4) (remainder i 4)))
       (hash-set* board loc m m loc)))
-  (game-state 0
-              (game-info (list (and player1 #t)
+  (game-state (game-info (list (and player1 #t)
                                (and player2 #t)
                                (and player3 #t)
                                (and player4 #t)))
@@ -131,10 +126,6 @@
 (define/spec (human-player? s p)
   (-> game-state? quadrant? boolean?)
   (and (list-ref (game-info-players (game-state-info s)) p) #t))
-
-(define/spec (current-tick s)
-  (-> game-state? exact-nonnegative-integer?)
-  (game-state-tick s))
 
 ;; whose turn is it?
 (define/spec (current-turn s)
@@ -174,8 +165,8 @@
 
 (define/spec (set-selected-marble s maybe-m)
   (-> game-state? (either marble? #f) game-state?)
-  (match-define (game-state tick info turn dice _ board) s)
-  (game-state (add1 tick) info turn dice
+  (match-define (game-state info turn dice _ board) s)
+  (game-state info turn dice
               (and maybe-m (selection maybe-m #f #f))
               board))
 
@@ -302,8 +293,8 @@
 ;; NOTE: `initiate-move` assumes the move is valid!
 (define/spec (initiate-selected-marble-move s dest)
   (-> game-state? dest? game-state?)
-  (match-define (game-state tick info turn dice (selection m _ _) board) s)
-  (game-state (add1 tick) info turn dice
+  (match-define (game-state info turn dice (selection m _ _) board) s)
+  (game-state info turn dice
               (selection m (marble-loc s m) dest)
               board))
 
@@ -317,8 +308,7 @@
 
 (define/spec (move-selected-marble-one-step s)
   (-> game-state? game-state?)
-  (match-define (game-state tick
-                            info
+  (match-define (game-state info
                             turn
                             dice
                             (selection sel-marble sel-loc sel-dest)
@@ -326,8 +316,7 @@
     s)
   (cond
     [(next-loc turn sel-loc sel-dest)
-     => (λ (new-loc) (game-state (add1 tick)
-                                 info
+     => (λ (new-loc) (game-state info
                                  turn
                                  dice
                                  (selection sel-marble new-loc sel-dest)
@@ -340,7 +329,7 @@
 ;; NOTE: `move-marble` assumes the move is valid!
 (define/spec (move-marble/inc-turn s m dest)
   (-> game-state? marble? dest? game-state?)
-  (match-define (game-state tick info turn dice _ board) s)
+  (match-define (game-state info turn dice _ board) s)
   ;; consume the movement, unselect the marble, if there are no movements left
   ;; for this player, roll the dice again and increment the turn
   (define start-loc (hash-ref board m))
@@ -368,18 +357,18 @@
   (when (null? dice)
     (set! turn (inc-turn turn))
     (set! dice (list (die-roll))))
-  (game-state (add1 tick) info turn dice #f board))
+  (game-state info turn dice #f board))
 
 (define/spec (skip-turn s)
   (-> game-state? game-state?)
-  (match-define (game-state tick info turn dice _ board) s)
+  (match-define (game-state info turn dice _ board) s)
   (match dice
     [(cons 6 rst)
-     (game-state (add1 tick) info turn (append rst (list (die-roll))) #f board)]
+     (game-state info turn (append rst (list (die-roll))) #f board)]
     [(cons _ (? pair? rst))
-     (game-state (add1 tick) info turn rst #f board)]
+     (game-state info turn rst #f board)]
     [(cons _ (? null?))
-     (game-state (add1 tick) info (inc-turn turn) (list (die-roll)) #f board)]))
+     (game-state info (inc-turn turn) (list (die-roll)) #f board)]))
 
 (define/spec (loc-add1 l)
   (-> loc? dest?)
@@ -408,9 +397,3 @@
                            (eqv? 11 (coord->index start)))
                       (goal player 0)
                       (add1 start))])]))
-
-
-(define/spec (increment-tick s)
-  (-> game-state? game-state?)
-  (match-define (game-state tick info turn dice sel board) s)
-  (game-state (add1 tick) info turn dice sel board))

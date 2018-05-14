@@ -1,13 +1,6 @@
 #lang racket/base
 
-(require define-with-spec
-         racket/match
-         racket/fixnum)
-
-(provide (all-defined-out))
-
-;; the board has 4 quadrants
-;; and a "center location" C
+;; A Bumpo board has 4 quadrants and a "center location" C:
 ;;       |
 ;;  3    |   0
 ;;       |       
@@ -17,11 +10,12 @@
 ;;       |
 
 
-;; each quadrant has:
-;; 12 standard locations (0-11 + q*12),
-;; 4 goal locations (1q0-1q3),
-;; and 4 home locatinos ('hq0-'hq3)
-;; here is quadrant 0 for an example:
+;; Each quadrant has:
+;; - 12 standard locations (0-11 + q*12),
+;; - 4 goal locations (1q0-1q3), and
+;; - 4 home locations ('hq0-'hq3).
+;;
+;; Here is quadrant 0 for an example:
 ;;- - - - - - - - - - - -|
 ;;        0   h00        |
 ;;   100  1     h01      |
@@ -32,6 +26,49 @@
 ;; #t               11   |
 ;;                       |
 ;;- - - - - - - - - - - -|
+
+(require define-with-spec
+         ;;racket/fixnum
+         (only-in racket/unsafe/ops
+                  [unsafe-fx+ fx+]
+                  [unsafe-fx- fx-]
+                  [unsafe-fx* fx*]
+                  [unsafe-fx= fx=]
+                  [unsafe-fx<= fx<=]
+                  [unsafe-fx< fx<]
+                  [unsafe-fxremainder fxremainder]
+                  [unsafe-fxquotient fxquotient]
+                  [unsafe-fxmodulo fxmodulo]))
+
+
+
+(provide quadrant?
+         loc?
+         goal?
+         dest?
+         coord?
+         center?
+         home?
+         
+         home
+         goal
+         coord
+         center
+         
+         predecessor-quadrant
+         increment-quadrant
+
+         coord->quadrant
+         coord->index
+         coord->quadrant/index
+         goal->quadrant
+         goal->index
+         goal->quadrant/index
+         home->quadrant
+         home->index
+         home->quadrant/index)
+
+
 
 (define-syntax-rule (fx-range-pred lower-inclusive upper-exclusive)
   (λ (x) (and (fixnum? x)
@@ -46,18 +83,11 @@
 
 (define/spec (predecessor-quadrant player-num)
   (-> quadrant? quadrant?)
-  (modulo (- player-num 1) 4))
+  (fxmodulo (fx- player-num 1) 4))
 
 (define/spec (increment-quadrant q)
   (-> quadrant? quadrant?)
-  (modulo (+ q 1) 4))
-
-;; if `c` is a safe loc, return the quadrant,
-;; otherwise return #f
-(define/spec (safe-coord? c)
-  (-> coord? quadrant?)
-  (and (fx= 0 (fxremainder c 12))
-       (fxquotient c 12)))
+  (fxmodulo (+ q 1) 4))
 
 (define/spec (coord q i)
   (-> quadrant?

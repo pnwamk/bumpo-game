@@ -8,6 +8,10 @@
          "loc.rkt"
          "logic.rkt")
 
+
+(provide image-coord->location
+         draw-world)
+
 (define pi 3.141592653589793)
 
 (struct/spec posn ([x real?] [y real?]))
@@ -319,8 +323,8 @@
 
 (define/spec (draw-dice-on-board state board)
   (-> game-state? image? image?)
-  (define val (game-state-die state))
-  (define turn (game-state-turn state))
+  (define val (current-die state))
+  (define turn (current-turn state))
   (define die (dice-image val))
   (place-image
    die
@@ -399,7 +403,7 @@
     ;; a marble is selected but not moving, let's render
     ;; the paths it can take
     [else
-     (define dist (game-state-die s))
+     (define dist (current-die s))
      (define moves (possible-moves s sel-marble dist))
      (match moves
        [#f rendered-board-image]
@@ -458,75 +462,3 @@
        (match-define (posn next-x next-y) (loc->image-posn next))
        (loop (add-line img cur-x cur-y next-x next-y (player->path-pen player))
              next)])))
-
-(define/spec (handle-mouse s x y mevent)
-  (-> game-state? real? real? mouse-event?
-      game-state?)
-  (cond
-    [(or (not (list-ref (game-state-players s)
-                        (current-turn s)))
-         (marble-moving? s))
-     s]
-    [(not (mouse=? mevent "button-down")) s]
-    [else
-     (define sel-marble (selected-marble s))
-     (define clicked-location (image-coord->location x y))
-     (define marble-at-loc (and clicked-location
-                                (loc-ref s clicked-location)))
-     (cond
-       [(not clicked-location)
-        (set-selected-marble s #f)]
-       [(and clicked-location
-             sel-marble
-             (valid-move? s clicked-location))
-        (initiate-move s sel-marble clicked-location)]
-       [(and marble-at-loc
-             (eqv? (current-turn s)
-                   (marble-player marble-at-loc)))
-        (set-selected-marble s marble-at-loc)]
-       [else
-        (set-selected-marble s #f)])]))
-
-(define/spec (handle-tick s)
-  (-> game-state? game-state?)
-  (cond
-    ;; marble is moving (should happen every tick)
-    [(marble-moving? s) (move-marble-one-step s)]
-    ;; all other activity should occurr every 5 ticks
-    [(not (zero? (remainder (game-state-tick s) 5)))
-     (increment-tick-count s)]
-    [else
-     (define cur-player (current-turn s))
-     (define dist (game-state-die s))
-     (define sel-marble (selected-marble s))
-     (define cur-possible-moves
-       (for*/list ([m (in-player-marbles cur-player)]
-                   [moves (in-value (possible-moves s m dist))]
-                   #:when moves)
-         (cons m moves)))
-     (cond
-       ;; no moves
-       [(null? cur-possible-moves) (skip-turn s)]
-       ;; AI player, choose a random marble to select (if
-       ;; one is not selected) or move (if one is selected)
-       [(not (list-ref (game-state-players s) cur-player))
-        (cond
-          [(not sel-marble)
-           (set-selected-marble s (car (car (shuffle cur-possible-moves))))]
-          [else
-           (match (assoc sel-marble cur-possible-moves)
-             [(cons m (cons dest1 dest2))
-              (if (zero? (random 2))
-                  (initiate-move s m dest1)
-                  (initiate-move s m dest2))]
-             [(cons m dest) (initiate-move s m dest)])])]
-       [else (increment-tick-count s)])]))
-
-
-(big-bang (initial-game-state #f #f #f #t)
-  [on-draw draw-world]
-  [on-tick handle-tick .2]
-  [on-mouse handle-mouse])
-
-
-

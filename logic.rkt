@@ -6,34 +6,38 @@
          racket/fixnum
          "loc.rkt")
 
-(provide (all-defined-out))
+(provide initial-game-state
+         game-state?
 
-;; the board has 4 quadrants
-;; and a "center location" C
-;;       |
-;;  3    |   0
-;;       |       
-;;- - -  C  - - - 
-;;       |
-;;  2    |   1
-;;       |
+         current-tick
+         current-turn
+         current-die
+         
+         human-player?
 
+         marble?
+         marble-player
 
-;; each quadrant has:
-;; 12 standard locations (0-11 + q*12),
-;; 4 goal locations (1q0-1q3),
-;; and 4 home locatinos ('hq0-'hq3)
-;; here is quadrant 0 for an example:
-;;- - - - - - - - - - - -|
-;;        0   h00        |
-;;   100  1     h01      |
-;;   101  2       h02    |
-;;   102  3          h03 |
-;;   103  4              |
-;;        5 6 7 8 9 10   |
-;; 'center          11   |
-;;                       |
-;;- - - - - - - - - - - -|
+         selected-marble
+         selected-movement-loc
+         selected-movement-dest
+         selected-marble-moving?
+         valid-selected-marble-move?
+         initiate-selected-marble-move
+         move-selected-marble-one-step
+         set-selected-marble
+
+         marble-loc
+         loc-ref
+
+         possible-moves
+         next-loc
+
+         skip-turn
+         increment-tick
+
+         in-player-marbles)
+
 
 (define (die-roll) (add1 (random 6)))
 
@@ -91,7 +95,7 @@
   ;; build initial marble/location mappings
   (define board
     (for/fold ([board (hasheq)])
-              ([m (in-vector marbles)]
+              ([m (in-marbles)]
                [i (in-range 16)])
       (define loc (home (quotient i 4) (remainder i 4)))
       (hash-set* board loc m m loc)))
@@ -124,16 +128,20 @@
             m
             (λ () (error 'marble-loc "impossible!"))))
 
-(define/spec (game-state-players s)
-  (-> game-state? (list boolean? boolean? boolean? boolean?))
-  (game-info-players (game-state-info s)))
+(define/spec (human-player? s p)
+  (-> game-state? quadrant? boolean?)
+  (and (list-ref (game-info-players (game-state-info s)) p) #t))
+
+(define/spec (current-tick s)
+  (-> game-state? exact-nonnegative-integer?)
+  (game-state-tick s))
 
 ;; whose turn is it?
 (define/spec (current-turn s)
   (-> game-state? quadrant?)
   (game-state-turn s))
 
-(define/spec (game-state-die s)
+(define/spec (current-die s)
   (-> game-state? die-val?)
   (car (game-state-dice s)))
 
@@ -277,10 +285,10 @@
 
 ;; the user clicked on a location -- can they
 ;; move the selected marble there?
-(define/spec (valid-move? s clicked-location)
+(define/spec (valid-selected-marble-move? s clicked-location)
   (-> game-state? loc? boolean?)
   (define sel-marble (selection-marble (game-state-selected s)))
-  (define dist (game-state-die s))
+  (define dist (current-die s))
   (define moves (possible-moves s sel-marble dist))
   (or (equal? clicked-location moves)
       (and (pair? moves)
@@ -292,14 +300,14 @@
 
 
 ;; NOTE: `initiate-move` assumes the move is valid!
-(define/spec (initiate-move s m dest)
-  (-> game-state? marble? dest? game-state?)
-  (match-define (game-state tick info turn dice _ board) s)
+(define/spec (initiate-selected-marble-move s dest)
+  (-> game-state? dest? game-state?)
+  (match-define (game-state tick info turn dice (selection m _ _) board) s)
   (game-state (add1 tick) info turn dice
               (selection m (marble-loc s m) dest)
               board))
 
-(define/spec (marble-moving? s)
+(define/spec (selected-marble-moving? s)
   (-> game-state? boolean?)
   (cond
     [(game-state-selected s)
@@ -307,7 +315,7 @@
     [else #f]))
 
 
-(define/spec (move-marble-one-step s)
+(define/spec (move-selected-marble-one-step s)
   (-> game-state? game-state?)
   (match-define (game-state tick
                             info
@@ -402,7 +410,7 @@
                       (add1 start))])]))
 
 
-(define/spec (increment-tick-count s)
+(define/spec (increment-tick s)
   (-> game-state? game-state?)
   (match-define (game-state tick info turn dice sel board) s)
   (game-state (add1 tick) info turn dice sel board))

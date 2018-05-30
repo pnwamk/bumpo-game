@@ -1,4 +1,6 @@
-#lang racket/base
+#lang typed/racket/base #:with-refinements
+
+(provide (all-defined-out))
 
 ;; A Bumpo board has 4 quadrants and a "center location" C:
 ;;       |
@@ -17,179 +19,77 @@
 ;;
 ;; Here is quadrant 0 for an example:
 ;;- - - - - - - - - - - -|
-;;        0   h00        |
-;;   100  1     h01      |
-;;   101  2       h02    |
-;;   102  3          h03 |
-;;   103  4              |
-;;        5 6 7 8 9 10   |
-;; #t               11   |
+;;       0   h0          |
+;;   g0  1     h1        |
+;;   g1  2       h2      |
+;;   g2  3         h3    |
+;;   g3  4               |
+;;       5 6 7 8 9 10    |
+;; 'center         11    |
 ;;                       |
 ;;- - - - - - - - - - - -|
 
-(require define-with-spec
-         ;;racket/fixnum
-         (only-in racket/unsafe/ops
-                  [unsafe-fx+ fx+]
-                  [unsafe-fx- fx-]
-                  [unsafe-fx* fx*]
-                  [unsafe-fx= fx=]
-                  [unsafe-fx<= fx<=]
-                  [unsafe-fx< fx<]
-                  [unsafe-fxremainder fxremainder]
-                  [unsafe-fxquotient fxquotient]
-                  [unsafe-fxmodulo fxmodulo]))
+(define z4s : (Listof Z4) (list 0 1 2 3))
+(define z12s : (Listof Z12) (list 0 1 2 3 4 5 6 7 8 9 10 11))
+
+(define-type Z4 (Refine [n : Natural] (<= n 3)))
+(define-type Z12 (Refine [n : Natural] (<= n 11)))
+
+(struct Home  ([quad : Z4] [idx : Z4])  #:transparent)
+(struct Coord ([quad : Z4] [idx : Z12]) #:transparent)
+(struct Goal  ([quad : Z4] [idx : Z4])  #:transparent)
 
 
+(: Z4-add1 (-> Z4 Z4))
+(define (Z4-add1 z4)
+  (modulo (add1 z4) 4))
 
-(provide quadrant?
-         loc?
-         goal?
-         dest?
-         coord?
-         center?
-         home?
-         
-         home
-         goal
-         coord
-         center
-         
-         predecessor-quadrant
-         increment-quadrant
+(: Z4-sub1 (-> Z4 Z4))
+(define (Z4-sub1 z4)
+  (modulo (sub1 z4) 4))
 
-         coord->quadrant
-         coord->index
-         coord->quadrant/index
-         goal->quadrant
-         goal->index
-         goal->quadrant/index
-         home->quadrant
-         home->index
-         home->quadrant/index)
+(: Z4= (-> Z4 Z4 Boolean))
+(define Z4= eqv?)
 
+(define-type Movement (Refine [n : Integer] (or (<= 1 n 6) (= n 10))))
 
+(: Z12+ (-> Z12 Z12 Z12))
+(define (Z12+ x y)
+  (modulo (+ x y) 12))
 
-(define-syntax-rule (fx-range-pred lower-inclusive upper-exclusive)
-  (λ (x) (and (fixnum? x)
-              (fx<= lower-inclusive x)
-              (fx< x upper-exclusive))))
+(: Z12+/overflow (-> Z12 Z12 (Values Z12 Boolean)))
+(define (Z12+/overflow x y)
+  (define sum (+ x y))
+  (if (>= sum 12)
+      (values (- sum 12) #t)
+      (values sum #f)))
 
-(define quadrant? (fx-range-pred 0 4))
-(define coord-index? (fx-range-pred 0 12))
-(define home-index? quadrant?)
-(define goal-index? quadrant?)
-(define coord? (fx-range-pred 0 48))
+(: Z12= (-> Z12 Z12 Boolean))
+(define Z12= eqv?)
 
-(define/spec (predecessor-quadrant player-num)
-  (-> quadrant? quadrant?)
-  (fxmodulo (fx- player-num 1) 4))
+(define-type Center 'center)
+(define center : Center 'center)
+(: Center? (-> Any Boolean : Center))
+(define (Center? x) (eq? 'center x))
 
-(define/spec (increment-quadrant q)
-  (-> quadrant? quadrant?)
-  (fxmodulo (+ q 1) 4))
+(define-type Loc (U Home Coord Goal Center))
+(define-type Dest (U Coord Goal Center))
 
-(define/spec (coord q i)
-  (-> quadrant?
-      coord-index?
-      coord?)
-  (fx+ (fx* q 12) i))
-
-(define/spec (coord->quadrant l)
-  (-> coord? quadrant?)
-  (fxquotient l 12))
-
-(define/spec (coord->index l)
-  (-> coord? coord-index?)
-  (fxremainder l 12))
-
-(define (coord->quadrant/index l)
-  (if (coord? l)
-      (values (fxquotient l 12) (fxremainder l 12))
-      (error 'coord->quadrant/index "not a coord ~a" l)))
-
-(define home? symbol?)
-
-(define index->home-table
-  (vector-immutable
-   'h00 'h01 'h02 'h03
-   'h10 'h11 'h12 'h13
-   'h20 'h21 'h22 'h23
-   'h30 'h31 'h32 'h33))
-
-(define/spec (home q i)
-  (-> quadrant? home-index? home?)
-  (vector-ref index->home-table (+ (arithmetic-shift q 2) i)))
-
-(define home->quadrant-table
-  (hasheq 'h00 0 'h01 0 'h02 0 'h03 0
-          'h10 1 'h11 1 'h12 1 'h13 1
-          'h20 2 'h21 2 'h22 2 'h23 2
-          'h30 3 'h31 3 'h32 3 'h33 3))
-
-(define (home->quadrant h)
-  (hash-ref home->quadrant-table h
-            (λ () (error 'home->quadrant "given non-home!"))))
-
-(define home->index-table
-  (hasheq 'h00 0 'h01 1 'h02 2 'h03 3
-          'h10 0 'h11 1 'h12 2 'h13 3
-          'h20 0 'h21 1 'h22 2 'h23 3
-          'h30 0 'h31 1 'h32 2 'h33 3))
-
-(define (home->index h)
-  (hash-ref home->index-table h
-            (λ () (error 'home->index "given non-home!"))))
-
-(define (home->quadrant/index h)
-  (values (home->quadrant h)
-          (home->index h)))
-
-(define (goal? x)
-  (and (fixnum? x)
-       (fx<= 100 x)
-       (or (fx<= x 103)
-           (and (fx<= 110 x) (fx<= x 113))
-           (and (fx<= 120 x) (fx<= x 123))
-           (and (fx<= 130 x) (fx<= x 133)))))
-
-(define/spec (goal q i)
-  (-> quadrant? goal-index? goal?)
-  (fx+ 100 (fx+ (fx* 10 q) i)))
-
-(define/spec (goal->quadrant g)
-  (-> goal? quadrant?)
-  (fxquotient (fx- g 100) 10))
-
-(define/spec (goal->index g)
-  (-> goal? goal-index?)
-  (fxremainder (fx- g 100) 10))
-
-(define (goal->quadrant/index g)
-  (if (goal? g)
-      (let ([rel (fx- g 100)])
-        (values (fxquotient rel 10)
-                (fxremainder rel 10)))
-      (error 'goal->quadrant/index "not a goal ~a" g)))
-
-
-(define center #t)
-
-(define (center? x)
-  (eq? #t x))
-
-(define (loc? x)
-  (or (coord? x)
-      (home? x)
-      (goal? x)
-      (center? x)))
-
-;; a loc? that can be directly moved to
-;; by a player movement.
-(define (dest? x)
-  (or (coord? x)
-      (goal? x)
-      (center? x)))
+(: Loc-inc (-> Z4 Loc Dest))
+(define (Loc-inc player l)
+  (cond
+    [(Home? l) (Coord player 0)]
+    [(Coord? l)
+     (define idx* (Z12+ (Coord-idx l) 1))
+     (cond
+       [(zero? idx*)
+        (define quad* (Z4-add1 (Coord-quad l)))
+        (cond
+          [(= player quad*) (Goal player 0)]
+          [else (Coord quad* idx*)])]
+       [else (Coord (Coord-quad l) idx*)])]
+    [(Goal? l) (Goal player (Z4-add1 (Goal-idx l)))]
+    [(Center? l) (Coord (Z4-sub1 player) 5)]))
 
 
 

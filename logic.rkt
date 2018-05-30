@@ -1,399 +1,380 @@
-#lang racket/base
+#lang typed/racket/base #:with-refinements
 
-(require define-with-spec
-         racket/match
-         racket/struct
-         racket/fixnum
+(require racket/match
          "loc.rkt")
 
-(provide initial-game-state
-         game-state?
+(provide Marble
+         Marble-player
+         Marble-idx
 
-         current-turn
-         current-die
+         initial-state
+         GameInfo
+         Selection
+         GameState
+
+         die
+         turn
+         tick
+         board-ref
+         human?
          
-         human-player?
-
-         marble?
-         marble-player
-
          selected-marble
-         selected-movement-loc
-         selected-movement-dest
+         selected-move-loc
+         set-selected-marble
+         set-selected-marble/tick
          selected-marble-moving?
          valid-selected-marble-move?
          initiate-selected-marble-move
          move-selected-marble-one-step
-         set-selected-marble
-
-         marble-loc
-         loc-ref
-
-         possible-moves
-         next-loc
 
          skip-turn
-         
-         in-player-marbles)
+         possible-destinations
+         next-loc
+         inc-tick)
 
 
-(define (die-roll) (add1 (random 6)))
+(: die-roll (-> (Refine [n : Integer] (<= 1 n 6))))
+(define (die-roll)
+  (add1 (random 6)))
 
-;; player : 0 <= n <= 3
-(struct marble (player)
-  #:constructor-name make-new-marble-use-sparingly
-  #:methods gen:custom-write
-  [(define write-proc
-     (make-constructor-style-printer
-      (lambda (m) 'marble)
-      (lambda (m) (list (marble-player m)))))])
-(define marbles
-  (vector->immutable-vector
-   (for*/vector ([player (in-range 4)]
-                 [_ (in-range 4)])
-     (make-new-marble-use-sparingly player))))
-
-(define-syntax-rule (in-marbles)
-  (in-vector marbles))
-
-(define (die-val? x)
-  (and (fixnum? x)
-       (and (fx<= 1 x)
-            (or (fx<= x 6)
-                (fx= x 10)))))
-
-(struct/spec game-info (;; Which player is a human? #t is human, #f is AI
-                        [players (list boolean? boolean? boolean? boolean?)]))
+(struct Marble ([player : Z4] [idx : Z4])
+  #:transparent)
 
 
-(struct/spec selection (;; which marble is selected
-                        [marble marble?]
-                        ;; if this marble is moving, at what
-                        ;; location is it currently
-                        [movement-location (either loc? #f)]
-                        ;; if this marble is moving, what is
-                        ;; its final destination
-                        [movement-destination (either dest? #f)]))
+(struct GameInfo ([players : (List (U String #f)
+                                   (U String #f)
+                                   (U String #f)
+                                   (U String #f))])
+  #:transparent)
 
-(struct/spec game-state
-             ([info game-info?]
-              ;; Whose turn is it?
-              [turn quadrant?]
-              ;; List of die values to be used by the current player
-              ;; (there can be more than 1 value after landing on another player)
-              [dice (listof die-val?)]
-              ;; Is there a marble currently selected?
-              [selected (either selection? #f)]
-              ;; Mapping of locations to marbles & marbles to locations:
-              [board hash?]))
 
-(define (initial-game-state player1 player2 player3 player4)
-  ;; build initial marble/location mappings
-  (define board
-    (for/fold ([board (hasheq)])
-              ([m (in-marbles)]
-               [i (in-range 16)])
-      (define loc (home (quotient i 4) (remainder i 4)))
-      (hash-set* board loc m m loc)))
-  (game-state (game-info (list (and player1 #t)
-                               (and player2 #t)
-                               (and player3 #t)
-                               (and player4 #t)))
-              (random 4) ;; a random player starts
-              (list (die-roll))
-              #f ;; start with no marble selected
-              board))
+(struct Selection (;; which marble is selected
+                   [marble : Marble]
+                   ;; if this marble is moving, at what
+                   ;; location is it currently and
+                   ;; where is it going
+                   [move : (U #f (Pairof Loc Dest))])
+  #:transparent)
 
-;; iterates through the marbles for player `player-num`
-(define-syntax-rule (in-player-marbles player-num)
-  (in-vector marbles
-             (fxlshift player-num 2)
-             (fx+ (fxlshift player-num 2) 4)))
+
+(struct GameState
+  ([tick : Natural]
+   [info : GameInfo]
+   ;; Whose turn is it?
+   [turn : Z4]
+   ;; List of die values to be used by the current player
+   ;; (there can be more than 1 value after landing on another player)
+   [moves : (Listof Movement)]
+   ;; Is there a marble currently selected?
+   [selected : (U Selection #f)]
+   ;; Mapping of locations to marbles & marbles to locations:
+   [board : (Immutable-HashTable (U Loc Marble) (U Loc Marble))])
+  #:transparent)
+
+
+(: initial-state (-> (U String #f) (U String #f) (U String #f) (U String #f)
+                     GameState))
+(define (initial-state player1 player2 player3 player4)
+  (GameState 0
+             (GameInfo (list player1 player2 player3 player4))
+             (random 4) ;; a random player starts
+             (list (die-roll))
+             #f ;; start with no marble selected
+             (foldl (λ ([player-idx : Z4]
+                        [h : (Immutable-HashTable (U Loc Marble) (U Loc Marble))])
+                      (foldl (λ ([marble-idx : Z4]
+                                 [h : (Immutable-HashTable (U Loc Marble) (U Loc Marble))])
+                               (define home (Home player-idx marble-idx))
+                               (define marble (Marble player-idx marble-idx))
+                               (hash-set (hash-set h home marble)
+                                         marble home))
+                             h
+                             z4s))
+                    ((inst hash (U Loc Marble) (U Loc Marble)))
+                    z4s)))
 
 ;; return the marble at the location, or #f if
 ;; nothing is there
-(define/spec (loc-ref s l)
-  (-> game-state? loc? (either marble? #f))
-  (hash-ref (game-state-board s) l #f))
+(: board-ref (case->
+              (-> GameState Loc (U Marble #f))
+              (-> GameState Marble Loc)))
+(define (board-ref s x)
+  (cond
+    [(Marble? x)
+     (define l (hash-ref (GameState-board s) x #f))
+     (cond
+       [(or (not l) (Marble? l))
+        (error 'board-ref "failed to locate marble! ~a ~a" s x)]
+       [else l])]
+    [else
+     (define val (hash-ref (GameState-board s) x #f))
+     (and (Marble? val) val)]))
 
-;; where is a particular marble location?
-(define/spec (marble-loc s m)
-  (-> game-state? marble? loc?)
-  (hash-ref (game-state-board s)
-            m
-            (λ () (error 'marble-loc "impossible!"))))
-
-(define/spec (human-player? s p)
-  (-> game-state? quadrant? boolean?)
-  (and (list-ref (game-info-players (game-state-info s)) p) #t))
+(: human? (-> GameState Z4 Boolean))
+(define (human? s p)
+  (and (list-ref (GameInfo-players (GameState-info s)) p) #t))
 
 ;; whose turn is it?
-(define/spec (current-turn s)
-  (-> game-state? quadrant?)
-  (game-state-turn s))
+(: turn (-> GameState Z4))
+(define (turn s)
+  (GameState-turn s))
 
-(define/spec (current-die s)
-  (-> game-state? die-val?)
-  (car (game-state-dice s)))
+(: die (-> GameState Movement))
+(define (die s)
+  (car (GameState-moves s)))
+
+(: tick (-> GameState Natural))
+(define (tick s)
+  (GameState-tick s))
 
 ;; which marble is currently selected?
-(define/spec (current-selection s)
-  (-> game-state? (either selection? #f))
-  (game-state-selected s))
+(: selected (-> GameState (U Selection #f)))
+(define (selected s)
+  (GameState-selected s))
 
-(define/spec (selected-marble s)
-  (-> game-state? (either marble? #f))
-  (cond
-    [(game-state-selected s)
-     => selection-marble]
-    [else #f]))
+(: selected-marble (-> GameState (U Marble #f)))
+(define (selected-marble s)
+  (cond [(GameState-selected s) => Selection-marble]
+        [else #f]))
 
-(define/spec (selected-movement-loc s)
-  (-> game-state? (either loc? #f))
-  (cond
-    [(game-state-selected s)
-     => selection-movement-location]
-    [else #f]))
+(: selected-move-loc (-> GameState (U Loc #f)))
+(define (selected-move-loc s)
+  (define sel (GameState-selected s))
+  (cond [sel
+         (define move (Selection-move sel))
+         (and move (car move))]
+        [else #f]))
 
-(define/spec (selected-movement-dest s)
-  (-> game-state? (either dest? #f))
-  (cond
-    [(game-state-selected s)
-     => selection-movement-destination]
-    [else #f]))
+(: selected-move-dest (-> GameState (U Dest #f)))
+(define (selected-move-dest s)
+  (define sel (GameState-selected s))
+  (cond [sel
+         (define move (Selection-move sel))
+         (and move (cdr move))]
+        [else #f]))
 
 
-(define/spec (set-selected-marble s maybe-m)
-  (-> game-state? (either marble? #f) game-state?)
-  (match-define (game-state info turn dice _ board) s)
-  (game-state info turn dice
-              (and maybe-m (selection maybe-m #f #f))
-              board))
+(: set-selected-marble (-> GameState (U Marble #f) GameState))
+(define (set-selected-marble s maybe-m)
+  (struct-copy GameState s [selected (and maybe-m (Selection maybe-m #f))]))
 
-(define/spec (passes-self? s start dest)
-  (-> game-state? loc? dest? boolean?)
-  (define player (current-turn s))
+(: set-selected-marble/tick (-> GameState (U Marble #f) GameState))
+(define (set-selected-marble/tick s maybe-m)
+  (struct-copy GameState s
+               [tick (add1 (GameState-tick s))]
+               [selected (and maybe-m (Selection maybe-m #f))]))
+
+
+(: passes-self? (-> GameState Loc Dest Boolean))
+;; if the current player tries to move a marble
+;; from `start` to `dest`, will they pass and/or
+;; land on one of their own marbles?
+(define (passes-self? s start dest)
+  (define player (turn s))
   (let loop ([cur start])
     (define next (next-loc player cur dest))
     (cond
       [(not next) #f]
       [else
-       (define maybe-marble-at-loc (loc-ref s next))
+       (define maybe-marble-at-loc (board-ref s next))
        (cond
          [(and maybe-marble-at-loc
-               (eqv? player (marble-player maybe-marble-at-loc)))
+               (= player (Marble-player maybe-marble-at-loc)))
           #t]
          [else (loop next)])])))
 
-(define filter-moves
-  (case-lambda
-    [(s m start dest)
-     (cond
-       ;; you can't pass your own marbles
-       [(passes-self? s start dest) #f]
-       [(loc-ref s dest)
-        => (match-lambda
-             [(marble other-player)
-              (cond
-                ;; you can't land on your own marble
-                [(eqv? (current-turn s) other-player) #f]
-                ;; or on an enemy marble in its safe spot
-                [(and (coord? dest)
-                      (eqv? other-player (coord->quadrant dest))
-                      (zero? (coord->index dest)))
-                 #f]
-                [else dest])])]
-       [else dest])]
-    [(s m start dest1 dest2)
-     (cond
-       [(filter-moves s m start dest1)
-        (if (filter-moves s m start dest2)
-            (cons dest1 dest2)
-            dest1)]
-       [else (filter-moves s m start dest2)])]))
+(: valid-dest? (-> GameState Marble Loc
+                   (-> Dest Boolean)))
+(define ((valid-dest? s m start) dest)
+  (cond
+    ;; you can't pass your own marbles
+    [(passes-self? s start dest) #f]
+    [(board-ref s dest)
+     => (match-lambda
+          [(Marble other-player _)
+           (cond
+             ;; you can't land on your own marble
+             [(= (turn s) other-player) #f]
+             ;; or on an enemy marble in its safe spot
+             [(and (Coord? dest)
+                   (= other-player (Coord-quad dest))
+                   (zero? (Coord-idx dest)))
+              #f]
+             [else #t])])]
+    [else #t]))
 
+(: possible-destinations (-> GameState Marble Movement (Listof Dest)))
 ;; given state `s`, marble `m`, and
 ;; movement distance `dist`, calculate
 ;; possible moves for `m`
-(define/spec (possible-moves s m dist)
-  (-> game-state? marble? die-val?
-      (either dest? (cons dest? dest?) #f))
-  (define player (current-turn s))
+(define (possible-destinations s m dist)
+  (define player (turn s))
   (cond
     ;; if it's not your marble, you can't move it
-    [(not (eqv? player (marble-player m))) #f]
+    [(not (= player (Marble-player m))) (list)]
     [else
-     (define start (marble-loc s m))
-     (match* (start dist)
-       [((? home?) 1) (filter-moves s m start (coord player 0))]
-       [((? home?) 6) (filter-moves s m start (coord player 5))]
-       [((? home?) _) #f]
-       [((? center?) 1)
-        (filter-moves s m start (coord (predecessor-quadrant player) 5))]
-       [((? center?) _) #f]
-       [(_ _)
-        (cond
-          ;; marble is already in either the goal or the location
-          ;; 1 before the goal -- check if we can move the marble
-          ;; into a valid goal spot.
-          [(goal? start)
-           (define goal-pos (goal->index start))
-           (define n* (+ goal-pos dist))
-           (cond
-             [(<= n* 3) (filter-moves s m start
-                                      (goal player n*))]
-             [else #f])]
-          [else
-           (define-values (q pos) (coord->quadrant/index start))
-           ;; each quadrant has 12 non-goal locations, so mod by 12
-           (define-values (overflow pos*)
-             (quotient/remainder (+ dist pos) 12))
-           (cond
-             ;; when movement did not result in changing quadrants
-             [(zero? overflow)
-              (cond
-                ;; the special case when a marble may enter
-                ;; the center location
-                [(and (eqv? q player) (eqv? pos* 6))
-                 (filter-moves s m start center (coord player 6))]
-                [else
-                 (filter-moves s m start (coord q pos*))])]
-             ;; when movement did result in overflow but
-             ;; we weren't in the predecessor quadrant yet
-             ;; (and so we don't have to worry about rounding
-             ;; home plate, so to speak.
-             [(not (eqv? q (predecessor-quadrant player)))
-              (filter-moves s m start (coord (increment-quadrant q) pos*))]
-             ;; when movement did result in overlow, we
-             ;; were in the predecessor quadrant, but
-             ;; the movement was too far.
-             [(< 3 pos*) #f]
-             ;; when movement did result in overlow, we
-             ;; were in the predecessor quadrant, and
-             ;; the movement wasn't too far.
-             [else (filter-moves s m start (goal player pos*))])])])]))
+     (define start (board-ref s m))
+     (define possibilities : (Listof Dest)
+       (cond
+         [(Home? start)
+          (cond
+            [(or (= dist 1) (= dist 6)) (list (Coord player (sub1 dist)))]
+            [else (list)])]
+         [(Center? start)
+          (cond
+            [(= dist 1) (list (Coord (Z4-sub1 player) 5))]
+            [else (list)])]
+         [(Goal? start)
+          (define goal-pos (Goal-idx start))
+          (define n* (+ goal-pos dist))
+          (cond
+            [(<= n* 3) (list (Goal player n*))]
+            [else (list)])]
+         [else
+          (define q (Coord-quad start))
+          (define idx (Coord-idx start))
+          (define-values (idx* overflow?) (Z12+/overflow idx dist))
+          (cond
+            ;; when movement did not result in changing quadrants
+            [(not overflow?)
+             (cond
+               ;; the special case when a marble may enter the center location
+               [(and (= q player) (= idx* 6)) (list center (Coord player 6))]
+               [else (list (Coord q idx*))])]
+            ;; when movement did result in overflow but
+            ;; we weren't in the predecessor quadrant yet
+            ;; (and so we don't have to worry about rounding
+            ;; home plate, so to speak.
+            [(not (= q (Z4-sub1 player))) (list (Coord (Z4-add1 q) idx*))]
+            ;; when movement did result in overlow, we
+            ;; were in the predecessor quadrant, but
+            ;; the movement was too far.
+            [(< 3 idx*) (list)]
+            ;; when movement did result in overlow, we
+            ;; were in the predecessor quadrant, and
+            ;; the movement wasn't too far.
+            [else (list (Goal player idx*))])]))
+     ;; now remove possibilities that are invalid
+     (filter (valid-dest? s m start) possibilities)]))
 
 
+(: valid-selected-marble-move? (-> GameState Loc Boolean))
 ;; the user clicked on a location -- can they
 ;; move the selected marble there?
-(define/spec (valid-selected-marble-move? s clicked-location)
-  (-> game-state? loc? boolean?)
-  (define sel-marble (selection-marble (game-state-selected s)))
-  (define dist (current-die s))
-  (define moves (possible-moves s sel-marble dist))
-  (or (equal? clicked-location moves)
-      (and (pair? moves)
-           (or (equal? (car moves) clicked-location)
-               (equal? (cdr moves) clicked-location)))))
-
-(define (inc-turn n)
-  (remainder (add1 n) 4))
-
-
-;; NOTE: `initiate-move` assumes the move is valid!
-(define/spec (initiate-selected-marble-move s dest)
-  (-> game-state? dest? game-state?)
-  (match-define (game-state info turn dice (selection m _ _) board) s)
-  (game-state info turn dice
-              (selection m (marble-loc s m) dest)
-              board))
-
-(define/spec (selected-marble-moving? s)
-  (-> game-state? boolean?)
+(define (valid-selected-marble-move? s clicked-location)
+  (define sel (GameState-selected s))
   (cond
-    [(game-state-selected s)
-     => (λ (sel) (and (selection-movement-location sel) #t))]
+    [(not sel) #f]
+    [else
+     (define sel-marble (Selection-marble sel))
+     (define dist (die s))
+     (define ds (possible-destinations s sel-marble dist))
+     (and (member clicked-location ds) #t)]))
+
+
+
+(: initiate-selected-marble-move (-> GameState Dest GameState))
+;; NOTE: `initiate-move` assumes the move is valid!
+;; if no marble is selected, is a no-op
+(define (initiate-selected-marble-move s dest)
+  (define m (selected-marble s))
+  (if m
+      (struct-copy GameState s
+                   [tick (add1 (GameState-tick s))]
+                   [selected (Selection m (cons (board-ref s m) dest))])
+      s))
+
+(: selected-marble-moving? (-> GameState Boolean))
+(define (selected-marble-moving? s)
+  (cond
+    [(GameState-selected s)
+     => (λ (sel) (and (Selection-move sel) #t))]
     [else #f]))
 
 
-(define/spec (move-selected-marble-one-step s)
-  (-> game-state? game-state?)
-  (match-define (game-state info
-                            turn
-                            dice
-                            (selection sel-marble sel-loc sel-dest)
-                            board)
-    s)
+(: move-selected-marble-one-step (-> GameState GameState))
+(define (move-selected-marble-one-step s)
+  (define sel (GameState-selected s))
   (cond
-    [(next-loc turn sel-loc sel-dest)
-     => (λ (new-loc) (game-state info
-                                 turn
-                                 dice
-                                 (selection sel-marble new-loc sel-dest)
-                                 board))]
-    [else (move-marble/inc-turn s sel-marble sel-dest)]))
+    [sel
+     (define sel-marble (Selection-marble sel))
+     (define sel-move (Selection-move sel))
+     (cond
+       [(not sel-move) s]
+       [else
+        (define new-loc (next-loc (turn s) (car sel-move) (cdr sel-move)))
+        (cond
+          [new-loc
+           (struct-copy GameState s
+                        [tick (add1 (GameState-tick s))]
+                        [selected (Selection sel-marble (cons new-loc (cdr sel-move)))])]
+          [else (move-marble/inc-turn s sel-marble (cdr sel-move))])])]
+    [else s]))
 
+(: move-marble/inc-turn (-> GameState Marble Dest GameState))
 ;; given state `s`, move marble `m` to `dest`
-;; (adjusting any marble already at `dest` if
-;;  necessary)
+;; (adjusting any marble already at `dest` if necessary)
 ;; NOTE: `move-marble` assumes the move is valid!
-(define/spec (move-marble/inc-turn s m dest)
-  (-> game-state? marble? dest? game-state?)
-  (match-define (game-state info turn dice _ board) s)
-  ;; consume the movement, unselect the marble, if there are no movements left
-  ;; for this player, roll the dice again and increment the turn
-  (define start-loc (hash-ref board m))
-  (define maybe-dest-marble (hash-ref board dest #f))
-  (set! board (hash-set* (hash-remove board start-loc)
+(define (move-marble/inc-turn s m dest)
+  (define maybe-dest-marble (board-ref s dest))
+  (define-values (next-moves next-turn?)
+    (let* ([roll-again (if (= 6 (die s)) (list (die-roll)) (list))]
+           [bonus-10 (if maybe-dest-marble (list 10) (list))]
+           [ms ((inst append Movement) ;; TODO ugh why is this necessary
+                bonus-10
+                (cdr (GameState-moves s))
+                roll-again)])
+      (values ms (null? ms))))
+  (struct-copy
+   GameState s
+   [board (let ([board* (hash-set*
+                         (hash-remove
+                          (hash-remove (GameState-board s) m)
+                          (board-ref s m))
                          dest m
-                         m dest))
-  (define last-roll (car dice))
-  (set! dice (cdr dice))
-  (when (eqv? 6 last-roll)
-    (set! dice (append dice (list (die-roll)))))
-  
-  (when maybe-dest-marble
-    ;; if there was a marble at the destination,
-    ;; move it to an available home location
-    (define color (marble-player maybe-dest-marble))
-    (for*/first ([idx (in-range 4)]
-                 [h (in-value (home color idx))]
-                 #:unless (hash-ref board h #f))
-      (set! board (hash-set* board
-                             h maybe-dest-marble
-                             maybe-dest-marble h)))
-    ;; award the current player a 10
-    (set! dice (cons 10 dice)))
-  (when (null? dice)
-    (set! turn (inc-turn turn))
-    (set! dice (list (die-roll))))
-  (game-state info turn dice #f board))
+                         m dest)])
+            (cond
+              [maybe-dest-marble
+               (define home (Home (Marble-player maybe-dest-marble)
+                                  (Marble-idx maybe-dest-marble)))
+               (hash-set* (hash-remove board* maybe-dest-marble)
+                          home maybe-dest-marble
+                          maybe-dest-marble home)]
+              [else board*]))]
+   [selected #f]
+   [moves (if next-turn? (list (die-roll)) next-moves)]
+   [turn (if next-turn?
+             (Z4-add1 (turn s))
+             (turn s))]))
 
-(define/spec (skip-turn s)
-  (-> game-state? game-state?)
-  (match-define (game-state info turn dice _ board) s)
-  (match dice
-    [(cons 6 rst)
-     (game-state info turn (append rst (list (die-roll))) #f board)]
-    [(cons _ (? pair? rst))
-     (game-state info turn rst #f board)]
-    [(cons _ (? null?))
-     (game-state info (inc-turn turn) (list (die-roll)) #f board)]))
+(: skip-turn (-> GameState GameState))
+(define (skip-turn s)
+  (match-define (cons last-move remaining-moves) (GameState-moves s))
+  (struct-copy GameState s
+               [tick (add1 (GameState-tick s))]
+               [selected #f]
+               [turn (if (null? remaining-moves) (Z4-add1 (turn s)) (turn s))]
+               [moves (cond
+                        [(= 6 last-move) (append remaining-moves (list (ann (die-roll) Movement)))]
+                        [(null? remaining-moves) (list (die-roll))]
+                        [else remaining-moves])]))
 
-(define/spec (loc-add1 l)
-  (-> loc? dest?)
-  (remainder (add1 l) 48))
 
 ;; if a marble is going to move from `start` to `end`,
 ;; what is the single next step towards that movement,
 ;; or #f if start == end
-(define/spec (next-loc player start end)
-  (-> quadrant? loc? dest? (either dest? #f))
-  (match start
-    [(== end) #f]
-    [(? home?) (coord player 0)]
-    [(? center?) (coord (predecessor-quadrant player) 5)]
-    [(? goal?) (goal player (add1 (goal->index start)))]
-    [(? coord?)
-     (match end
-       [(? coord?) (loc-add1 start)]
-       [(? center?) (if (and (eqv? (coord->quadrant start)
-                                   player)
-                             (eqv? 5 (coord->index start)))
-                        center
-                        (add1 start))]
-       [(? goal?) (if (and (eqv? (coord->quadrant start)
-                                 (predecessor-quadrant player))
-                           (eqv? 11 (coord->index start)))
-                      (goal player 0)
-                      (add1 start))])]))
+(: next-loc (-> Z4 Loc Dest (U Dest #f)))
+(define (next-loc player start end)
+  (cond
+    [(equal? start end) #f]
+    [(and (Coord? start)
+          (Center? end)
+          (= player (Coord-quad start))
+          (= 5 (Coord-idx start)))
+     center]
+    [else (Loc-inc player start)]))
+
+(: inc-tick (-> GameState GameState))
+(define (inc-tick s)
+  (struct-copy GameState s
+               [tick (add1 (GameState-tick s))]))

@@ -1,17 +1,50 @@
 #lang typed/racket/base
 
 (require racket/match
+         racket/list
          "loc.rkt"
          "logic.rkt"
          "render.rkt")
 
 (provide handle-button-down
+         handle-key
          handle-tick)
 
+(: toggle-player-kind (-> PlayerKind PlayerKind))
+(define (toggle-player-kind pkind)
+  (if (eq? pkind 'HUM)
+      'COM
+      'HUM))
 
-(: handle-button-down (-> GameState Real Real GameState))
+(: handle-key (-> State String
+                  State))
+(define (handle-key s ke)
+  (cond
+    [(GameInfo? s)
+     (cond
+       [(string=? ke "1")
+        (match-define (list p1 p2 p3 p4) (player-info s))
+        (GameInfo (list (toggle-player-kind p1) p2 p3 p4))]
+       [(string=? ke "2")
+        (match-define (list p1 p2 p3 p4) (player-info s))
+        (GameInfo (list p1 (toggle-player-kind p2) p3 p4))]
+       [(string=? ke "3")
+        (match-define (list p1 p2 p3 p4) (player-info s))
+        (GameInfo (list p1 p2 (toggle-player-kind p3) p4))]
+       [(string=? ke "4")
+        (match-define (list p1 p2 p3 p4) (player-info s))
+        (GameInfo (list p1 p2 p3 (toggle-player-kind p4)))]
+       [(string=? ke "\r") (initial-state (player-info s))]
+       [(string=? ke "escape") #f]
+       [else s])]
+    [(string? s) setup-up-state]
+    [else s]))
+
+(: handle-button-down (-> State Real Real State))
 (define (handle-button-down s x y)
   (cond
+    [(string? s) setup-up-state]
+    [(not (GameState? s)) s]
     [(or (not (human? s (turn s)))
          (selected-marble-moving? s))
      s]
@@ -32,9 +65,38 @@
        [else
         (set-selected-marble s #f)])]))
 
-(: handle-tick (-> GameState GameState))
+(define goal-locations
+  (list (list (Goal 0 0) (Goal 0 1) (Goal 0 2) (Goal 0 3))
+        (list (Goal 1 0) (Goal 1 1) (Goal 1 2) (Goal 1 3))
+        (list (Goal 2 0) (Goal 2 1) (Goal 2 2) (Goal 2 3))
+        (list (Goal 3 0) (Goal 3 1) (Goal 3 2) (Goal 3 3))))
+
+;; do 3 players have all their marbles in Goal locations?
+(define (game-over? s)
+  (cond
+    [(not (GameState? s)) #f]
+    [else
+     (: player-done (-> (List Goal Goal Goal Goal) Boolean))
+     (define (player-done p)
+       (match-define (list g1 g2 g3 g4) p)
+       (and (Marble? (board-ref s g1))
+            (Marble? (board-ref s g2))
+            (Marble? (board-ref s g3))
+            (Marble? (board-ref s g4))))
+     (define players-done (foldl (λ ([goals : (List Goal Goal Goal Goal)]
+                                     [count : Natural])
+                                   (if (player-done goals)
+                                       (add1 count)
+                                       count))
+                                 0
+                                 goal-locations))
+     (>= players-done 3)]))
+
+(: handle-tick (-> State State))
 (define (handle-tick s)
   (cond
+    [(not (GameState? s)) s]
+    [(game-over? s) "Game over!"]
     ;; marble is moving (should happen every tick)
     [(selected-marble-moving? s) (move-selected-marble-one-step s)]
     ;; all other activity should occur every 5 ticks

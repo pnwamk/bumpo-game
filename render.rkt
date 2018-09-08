@@ -19,7 +19,7 @@
 (struct Posn ([x : Real] [y : Real]) #:transparent)
 
 (define board-color (color 139 69 19))
-(define board-side-length 225)
+(define board-side-length 250)
 (define board-base-image
   (regular-polygon board-side-length 8 'solid board-color))
 (define board-width (image-width board-base-image))
@@ -286,6 +286,15 @@
           board-base-image
           board-quadrants)))
 
+(define empty-base-img (empty-scene (image-width bumpo-board-base-image)
+                                    (image-height bumpo-board-base-image)))
+
+(define bumpo-setup-image
+  (overlay
+   (above (text "Press the numbers 1-4 to make players" 20 "black")
+          (text "human or computer. Press ENTER to play." 20 "black"))
+   empty-base-img))
+
 (: distance (case->
              (-> Posn Posn Real)
              (-> Posn Real Real Real)
@@ -341,14 +350,22 @@
      (ormap (image-coord->quadrant-loc x y) board-quadrants)]))
 
 
-(define (player-num->marble-image i)
+(define (player-num->color [i : Z4])
+  (match i
+    [0 green-color]
+    [1 yellow-color]
+    [2 red-color]
+    [3 blue-color]))
+
+(define (player-num->marble-image [i : Z4])
   (match i
     [0 green-marble]
     [1 yellow-marble]
     [2 red-marble]
     [3 blue-marble]))
 
-(define (player-num->highlight-marble-image i)
+
+(define (player-num->highlight-marble-image [i : Z4])
   (match i
     [0 highlight-green-marble]
     [1 highlight-yellow-marble]
@@ -356,7 +373,7 @@
     [3 highlight-blue-marble]))
 
 (: draw-dice-on-board (-> GameState Image Image))
-(define (draw-dice-on-board s board)
+(define (draw-dice-on-board s base-image)
   (define val (die s))
   (define t (turn s))
   (define d-img (dice-image val))
@@ -368,7 +385,40 @@
    (match t
      [(or 0 3) (+ 5 (image-width d-img))]
      [(or 1 2) (- board-height (+ 5 (image-width d-img)))])
-   board))
+   base-image))
+
+(: player-label (-> Z4 PlayerKind Image))
+(define (player-label player-idx player-kind)
+  (text (format "Player ~a (~a)" (add1 player-idx) player-kind)
+                 20 (player-num->color player-idx)))
+
+
+(: draw-players-on-board (-> (List PlayerKind
+                                   PlayerKind
+                                   PlayerKind
+                                   PlayerKind)
+                             Image
+                             Image))
+(define (draw-players-on-board players base-image)
+  (foldl (λ ([player-idx : Z4]
+             [player-kind : PlayerKind]
+             [img : Image])
+           (define-values (x-coord x-align)
+             (match player-idx
+               [(or 0 1) (values (- (image-width img) 2) 'right)]
+               [(or 2 3) (values 2                       'left)]))
+           (define-values (y-coord y-align)
+             (match player-idx
+               [(or 0 3) (values 2                        'top)]
+               [(or 1 2) (values (+ (image-height img) 2) 'bottom)]))
+           (place-image/align
+            (player-label player-idx player-kind)
+            x-coord y-coord
+            x-align y-align
+            img))
+         base-image
+         z4s
+         players))
 
 
 (: loc->image-posn (-> Loc Posn))
@@ -495,9 +545,24 @@
              next)])))
 
 
-(: render-state (-> GameState Image))
+(: render-state (-> State Image))
 (define (render-state s)
-  (let* ([img (draw-dice-on-board s bumpo-board-base-image)]
-         [img (draw-marbles-on-board s img)]
-         [img (draw-selected-marble-on-board s img)])
-    img))
+  (cond
+    [(string? s)
+     (overlay (above (text s 30 "red")
+                     (text "Press any key..." 20 "black"))
+              empty-base-img)]
+    [(GameInfo? s)
+     (draw-players-on-board
+      (player-info s)
+      bumpo-setup-image)]
+    [(GameState? s)
+     (let* ([img (draw-players-on-board
+                  (player-info s)
+                  bumpo-board-base-image)]
+            [img (draw-marbles-on-board s img)]
+            [img (draw-dice-on-board s img)]
+            [img (draw-selected-marble-on-board s img)])
+       img)]
+    [else (overlay (text "Goodbye!" 30 "red")
+                   empty-base-img)]))

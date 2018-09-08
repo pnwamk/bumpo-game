@@ -4,19 +4,27 @@
          "loc.rkt")
 
 (provide Marble
+         Marble?
          Marble-player
          Marble-idx
 
+         setup-up-state
          initial-state
+         PlayerKind
+         PlayerKind?
          GameInfo
+         GameInfo?
          Selection
          GameState
-
+         GameState?
+         State
+         
          die
          turn
          tick
          board-ref
          human?
+         player-info
          
          selected-marble
          selected-move-loc
@@ -32,6 +40,8 @@
          next-loc
          inc-tick)
 
+(define-type State (U GameInfo GameState String False))
+
 
 (: die-roll (-> (Refine [n : Integer] (<= 1 n 6))))
 (define (die-roll)
@@ -40,13 +50,17 @@
 (struct Marble ([player : Z4] [idx : Z4])
   #:transparent)
 
+(define-type PlayerKind (U 'HUM 'COM))
 
-(struct GameInfo ([players : (List (U String #f)
-                                   (U String #f)
-                                   (U String #f)
-                                   (U String #f))])
+(: PlayerKind? (-> Any Boolean : PlayerKind))
+(define (PlayerKind? p)
+  (or (eq? p 'HUM) (eq? p 'COM)))
+
+(struct GameInfo ([players : (List PlayerKind
+                                   PlayerKind
+                                   PlayerKind
+                                   PlayerKind)])
   #:transparent)
-
 
 (struct Selection (;; which marble is selected
                    [marble : Marble]
@@ -71,12 +85,13 @@
    [board : (Immutable-HashTable (U Loc Marble) (U Loc Marble))])
   #:transparent)
 
+(define setup-up-state (GameInfo (list 'COM 'COM 'COM 'COM)))
 
-(: initial-state (-> (U String #f) (U String #f) (U String #f) (U String #f)
+(: initial-state (-> (List PlayerKind PlayerKind PlayerKind PlayerKind)
                      GameState))
-(define (initial-state player1 player2 player3 player4)
+(define (initial-state players)
   (GameState 0
-             (GameInfo (list player1 player2 player3 player4))
+             (GameInfo players)
              (random 4) ;; a random player starts
              (list (die-roll))
              #f ;; start with no marble selected
@@ -112,7 +127,19 @@
 
 (: human? (-> GameState Z4 Boolean))
 (define (human? s p)
-  (and (list-ref (GameInfo-players (GameState-info s)) p) #t))
+  (eq? 'HUM (list-ref (GameInfo-players (GameState-info s)) p)))
+
+(: player-info (-> (U GameInfo GameState)
+                   (List PlayerKind
+                         PlayerKind
+                         PlayerKind
+                         PlayerKind)))
+(define (player-info s)
+  (cond
+    [(GameInfo? s)
+     (GameInfo-players s)]
+    [else
+     (GameInfo-players (GameState-info s))]))
 
 ;; whose turn is it?
 (: turn (-> GameState Z4))
@@ -372,7 +399,7 @@
           (= player (Coord-quad start))
           (= 5 (Coord-idx start)))
      center]
-    [else (Loc-inc player start)]))
+    [else (Loc-add1 player start)]))
 
 (: inc-tick (-> GameState GameState))
 (define (inc-tick s)

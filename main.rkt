@@ -10,9 +10,11 @@
 
 
 
-(big-bang (initial-state #f #f #f #f)
+(big-bang "Welcome to Bumpo!"
   [on-draw render-state]
   [on-tick handle-tick .2]
+  [stop-when (λ (s) (not s))]
+  [on-key handle-key]
   [on-mouse (λ (s x y me)
               (cond
                 [(mouse=? me "button-down")

@@ -9,6 +9,7 @@
          Marble-idx
 
          setup-up-state
+         toggle-player-kind
          initial-state
          PlayerKind
          PlayerKind?
@@ -61,6 +62,22 @@
                                    PlayerKind
                                    PlayerKind)])
   #:transparent)
+
+
+(: toggle-player-kind (-> (U GameInfo GameState) Z4 (U GameInfo GameState)))
+(define (toggle-player-kind s i)
+  (: toggle (-> PlayerKind PlayerKind))
+  (define (toggle pkind)
+    (if (eq? pkind 'HUM) 'COM 'HUM))
+  (match-define (list p1 p2 p3 p4) (player-info s))
+  (define players
+    (cond [(eqv? i 0) (list (toggle p1) p2 p3 p4)]
+          [(eqv? i 1) (list p1 (toggle p2) p3 p4)]
+          [(eqv? i 2) (list p1 p2 (toggle p3) p4)]
+          [(eqv? i 3) (list p1 p2 p3 (toggle p4))]))
+  (cond
+      [(GameInfo? s) (GameInfo players)]
+      [else (struct-copy GameState s [info (GameInfo players)])]))
 
 (struct Selection (;; which marble is selected
                    [marble : Marble]
@@ -190,7 +207,6 @@
   (struct-copy GameState s
                [tick (add1 (GameState-tick s))]
                [selected (and maybe-m (Selection maybe-m #f))]))
-
 
 (: passes-self? (-> GameState Loc Dest Boolean))
 ;; if the current player tries to move a marble

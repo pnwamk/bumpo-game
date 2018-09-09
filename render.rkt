@@ -291,8 +291,10 @@
 
 (define bumpo-setup-image
   (overlay
-   (above (text "Press the numbers 1-4 to make players" 20 "black")
-          (text "human or computer. Press ENTER to play." 20 "black"))
+   (above (text "Press the numbers 1-4 at any time to change" 20 "black")
+          (text "whether a player is human or computer." 20 "black")
+          (text " " 20 "black")
+          (text "Press ENTER when ready to play!" 20 "black"))
    empty-base-img))
 
 (: distance (case->

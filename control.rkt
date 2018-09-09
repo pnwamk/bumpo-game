@@ -1,4 +1,4 @@
-#lang typed/racket/base
+#lang typed/racket/base #:with-refinements
 
 (require racket/match
          racket/list
@@ -10,32 +10,19 @@
          handle-key
          handle-tick)
 
-(: toggle-player-kind (-> PlayerKind PlayerKind))
-(define (toggle-player-kind pkind)
-  (if (eq? pkind 'HUM)
-      'COM
-      'HUM))
 
 (: handle-key (-> State String
                   State))
 (define (handle-key s ke)
   (cond
-    [(GameInfo? s)
+    [(or (GameInfo? s) (GameState? s))
+     (define maybe-num (string->number ke))
      (cond
-       [(string=? ke "1")
-        (match-define (list p1 p2 p3 p4) (player-info s))
-        (GameInfo (list (toggle-player-kind p1) p2 p3 p4))]
-       [(string=? ke "2")
-        (match-define (list p1 p2 p3 p4) (player-info s))
-        (GameInfo (list p1 (toggle-player-kind p2) p3 p4))]
-       [(string=? ke "3")
-        (match-define (list p1 p2 p3 p4) (player-info s))
-        (GameInfo (list p1 p2 (toggle-player-kind p3) p4))]
-       [(string=? ke "4")
-        (match-define (list p1 p2 p3 p4) (player-info s))
-        (GameInfo (list p1 p2 p3 (toggle-player-kind p4)))]
-       [(string=? ke "\r") (initial-state (player-info s))]
-       [(string=? ke "escape") #f]
+       [(and (exact-integer? maybe-num)
+             (<= 1 maybe-num 4))
+        (toggle-player-kind s (sub1 maybe-num))]
+       [(and (string=? ke "\r") (GameInfo? s))
+        (initial-state (player-info s))]
        [else s])]
     [(string? s) setup-up-state]
     [else s]))
@@ -128,6 +115,13 @@
             (car (list-ref cur-possible-moves
                            (random (length cur-possible-moves)))))]
           [else
-           (match-define (cons m ds) (assoc sel-marble cur-possible-moves))
-           (initiate-selected-marble-move s (list-ref ds (random (length ds))))])]
+           (match (assoc sel-marble cur-possible-moves)
+             [#f
+              ;; a marble that cannot move is selected
+              ;; (this can happen from user intervention)
+              ;; unselect this marble and continue!
+              (set-selected-marble/tick s #f)]
+             [(cons m ds)
+              (initiate-selected-marble-move s (list-ref ds (random (length ds))))])])]
+       ;; humans must use their own biological tick handlers
        [else s])]))
